@@ -1,0 +1,8 @@
+LDI  r3, 255
+XORR r0, r3
+XORR r1, r3
+XORR r2, r3
+ACCW r0, 1
+ACCW r1, 2
+ACCW r2, 4
+OUT

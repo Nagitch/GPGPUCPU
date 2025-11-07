@@ -1,0 +1,6 @@
+ADD  r0, 40
+MIX  ACC, r0
+ACCW r0,1
+ACCW r1,2
+ACCW r2,4
+OUT

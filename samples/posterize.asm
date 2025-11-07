@@ -1,0 +1,13 @@
+XOR  r0, 32
+XOR  r1, 32
+XOR  r2, 32
+ROTL r0, 2
+ROTL r1, 2
+ROTL r2, 2
+ROTL r0, 6
+ROTL r1, 6
+ROTL r2, 6
+ACCW r0,1
+ACCW r1,2
+ACCW r2,4
+OUT

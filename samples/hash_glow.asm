@@ -1,0 +1,4 @@
+HASH r3
+MOV  r0, r3
+MIX  ACC, r0
+OUT

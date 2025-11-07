@@ -1,0 +1,4 @@
+ACCW r0, 7
+MIX  ACC, r1
+MIX  ACC, r2
+OUT

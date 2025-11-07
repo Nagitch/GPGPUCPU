@@ -1,0 +1,69 @@
+// FilterPalette.compute (VM with jump-suppression toggle)
+#pragma kernel Run
+Texture2D<float4> SourceTex;
+Texture2D<uint>   IndexTex;
+RWTexture2D<float4> OutTex;
+StructuredBuffer<uint>  Bytecode;
+StructuredBuffer<uint2> Programs;
+uint MaxSteps = 64;
+uint Width;
+uint Height;
+uint DisableJumps;
+uint rotl8(uint v, uint s){ s &= 7u; return ((v<<s) | (v>>(8u-s))) & 0xFFu; }
+void op_mix(inout uint r, inout uint g, inout uint b, uint a){
+    uint t = (a * 33u + 17u) & 0xFFu;
+    r = ((r + t) ^ (g >> 1)) & 0xFFu;
+    g = ((g + ((t<<1)&0xFFu)) ^ (b >> 2)) & 0xFFu;
+    b = ((b + (t >> 1)) ^ (r >> 3)) & 0xFFu;
+}
+uint op_hash(uint a){
+    a &= 0xFFu;
+    a ^= a >> 4; a = (a * 197u) & 0xFFu; a ^= a >> 5;
+    return a & 0xFFu;
+}
+[numthreads(8,8,1)]
+void Run(uint3 tid : SV_DispatchThreadID){
+    if (tid.x >= Width || tid.y >= Height) return;
+    uint2 xy = tid.xy;
+    float4 src = SourceTex.Load(int3(xy,0));
+    uint idx = IndexTex.Load(int3(xy,0)) & 0xFFu;
+    uint r0 = (uint)round(saturate(src.r) * 255.0);
+    uint r1 = (uint)round(saturate(src.g) * 255.0);
+    uint r2 = (uint)round(saturate(src.b) * 255.0);
+    uint r3 = (uint)((xy.x + xy.y * Width) & 0xFFu);
+    uint R = r0, G = r1, B = r2;
+    bool Z = false;
+    uint2 prog = Programs[idx];
+    uint pc = prog.x;
+    uint end = prog.x + prog.y;
+    #define GETA(A) ( (A)<4u ? ((A)==0u? r0 : (A)==1u? r1 : (A)==2u? r2 : r3) : ((A)==4u? R : (A)==5u? G : B) )
+    #define SETA(A,V) { uint _v=(V)&0xFFu; if((A)<4u){ if((A)==0u) r0=_v; else if((A)==1u) r1=_v; else if((A)==2u) r2=_v; else r3=_v; } else { if((A)==4u) R=_v; else if((A)==5u) G=_v; else if((A)==6u) B=_v; } }
+    [loop]
+    for(uint step=0; step<MaxSteps && pc<end; ++step){
+        uint inst = Bytecode[pc++];
+        uint op = (inst >> 12) & 0xFu;
+        uint A  = (inst >> 8)  & 0xFu;
+        uint imm= inst & 0xFFu;
+        int simm = (int)((imm ^ 0x80u) - 0x80u);
+        switch(op){
+            case 0x0: break;
+            case 0x1: SETA(A, imm); Z = (imm==0); break;
+            case 0x2: { uint v=(GETA(A)+imm)&0xFFu; SETA(A,v); Z=(v==0);} break;
+            case 0x3: { uint v=(GETA(A)^imm)&0xFFu; SETA(A,v); Z=(v==0);} break;
+            case 0x4: { uint v=rotl8(GETA(A), imm); SETA(A,v); Z=(v==0);} break;
+            case 0x5: { op_mix(R,G,B, GETA(A)); } break;
+            case 0x6: { uint sel = imm & 7u; uint v = (sel<4u)? (sel==0u? r0 : sel==1u? r1 : sel==2u? r2 : r3) : (sel==4u? R : sel==5u? G : B); SETA(A,v); Z=(v==0);} break;
+            case 0x7: { uint sel=imm&7u; uint vsrc = (sel<4u)? (sel==0u? r0 : sel==1u? r1 : sel==2u? r2 : r3) : (sel==4u? R : sel==5u? G : B); uint v=(GETA(A)+vsrc)&0xFFu; SETA(A,v); Z=(v==0);} break;
+            case 0x8: { uint sel=imm&7u; uint vsrc = (sel<4u)? (sel==0u? r0 : sel==1u? r1 : sel==2u? r2 : r3) : (sel==4u? R : sel==5u? G : B); uint v=(GETA(A)^vsrc)&0xFFu; SETA(A,v); Z=(v==0);} break;
+            case 0x9: { Z = (GETA(A)==0); } break;
+            case 0xA: { if(DisableJumps==0 && Z)  pc = (uint)((int)pc + simm); } break;
+            case 0xB: { if(DisableJumps==0 && !Z) pc = (uint)((int)pc + simm); } break;
+            case 0xC: { if(DisableJumps==0)       pc = (uint)((int)pc + simm); } break;
+            case 0xD: { uint m=imm&7u; uint v=GETA(A); if(m&1u) R=v; if(m&2u) G=v; if(m&4u) B=v; } break;
+            case 0xE: { uint v=op_hash(GETA(A)); SETA(A,v); Z=(v==0);} break;
+            case 0xF: { step = MaxSteps; pc = end; } break;
+        }
+    }
+    float3 col = float3(R,G,B)/255.0;
+    OutTex[xy] = float4(col, 1.0);
+}
