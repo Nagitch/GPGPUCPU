@@ -4,6 +4,7 @@ using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
 using UnityEngine.Experimental.Rendering;
+using UnityEngine.Rendering.RenderGraphModule;
 
 /// <summary>
 /// URP renderer feature that runs the VMFilterPalette compute shader as a post-process.
@@ -68,21 +69,24 @@ public class VMFilterPaletteRendererFeature : ScriptableRendererFeature
             return;
         }
 
-        _pass.Setup(renderer.cameraColorTargetHandle);
         renderer.EnqueuePass(_pass);
     }
 
+    [System.Obsolete("This rendering path is for compatibility mode only (when Render Graph is disabled). Use Render Graph API instead.", false)]
     public override void SetupRenderPasses(ScriptableRenderer renderer, in RenderingData renderingData)
     {
-#if UNITY_2023_1_OR_NEWER
         if (_pass != null)
         {
+#pragma warning disable CS0618 // Type or member is obsolete
+            _pass.Setup(renderer.cameraColorTargetHandle);
+#pragma warning restore CS0618 // Type or member is obsolete
+#if UNITY_2023_1_OR_NEWER
             _pass.ConfigureInput(ScriptableRenderPassInput.Color);
-        }
 #endif
+        }
     }
 
-    public override void Dispose(bool disposing)
+    protected override void Dispose(bool disposing)
     {
         base.Dispose(disposing);
         ReleaseBuffers();
@@ -197,6 +201,7 @@ public class VMFilterPaletteRendererFeature : ScriptableRendererFeature
             _cameraColorTarget = cameraColorTarget;
         }
 
+        [System.Obsolete("This rendering path is for compatibility mode only (when Render Graph is disabled). Use Render Graph API instead.", false)]
         public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
         {
             if (_feature.shader == null || !_feature._buffersReady)
@@ -216,12 +221,12 @@ public class VMFilterPaletteRendererFeature : ScriptableRendererFeature
             cameraDescriptor.enableRandomWrite = true;
             cameraDescriptor.graphicsFormat = GraphicsFormat.R8G8B8A8_UNorm;
 
-            RenderingUtils.ReAllocateIfNeeded(ref _outputHandle, cameraDescriptor, FilterMode.Point, TextureWrapMode.Clamp, name: "_VMFilterPaletteOutput");
+            RenderingUtils.ReAllocateHandleIfNeeded(ref _outputHandle, cameraDescriptor, FilterMode.Point, TextureWrapMode.Clamp, name: "_VMFilterPaletteOutput");
 
             var indexDescriptor = cameraDescriptor;
             indexDescriptor.enableRandomWrite = false;
             indexDescriptor.graphicsFormat = GraphicsFormat.R8_UNorm;
-            RenderingUtils.ReAllocateIfNeeded(ref _scaledIndexHandle, indexDescriptor, FilterMode.Point, TextureWrapMode.Clamp, name: "_VMFilterPaletteIndex");
+            RenderingUtils.ReAllocateHandleIfNeeded(ref _scaledIndexHandle, indexDescriptor, FilterMode.Point, TextureWrapMode.Clamp, name: "_VMFilterPaletteIndex");
 
             var cmd = CommandBufferPool.Get("VMFilterPalette");
 
@@ -248,10 +253,99 @@ public class VMFilterPaletteRendererFeature : ScriptableRendererFeature
             CommandBufferPool.Release(cmd);
         }
 
+        // Render Graph implementation for Unity 6+
+        public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
+        {
+            if (_feature.shader == null || !_feature._buffersReady)
+            {
+                return;
+            }
+
+            if (_feature.indexTexture == null)
+            {
+                Debug.LogWarning("VMFilterPaletteRendererFeature: Index texture is not assigned. Skipping effect.");
+                return;
+            }
+
+            UniversalResourceData resourceData = frameData.Get<UniversalResourceData>();
+            UniversalCameraData cameraData = frameData.Get<UniversalCameraData>();
+            
+            var sourceTexture = resourceData.activeColorTexture;
+            
+            using (var builder = renderGraph.AddUnsafePass<VMFilterPalettePassData>("VMFilterPalette", out var passData))
+            {
+                var cameraDescriptor = cameraData.cameraTargetDescriptor;
+                cameraDescriptor.depthBufferBits = 0;
+                cameraDescriptor.msaaSamples = 1;
+                cameraDescriptor.enableRandomWrite = true;
+                cameraDescriptor.graphicsFormat = GraphicsFormat.R8G8B8A8_UNorm;
+
+                var indexDescriptor = cameraDescriptor;
+                indexDescriptor.enableRandomWrite = false;
+                indexDescriptor.graphicsFormat = GraphicsFormat.R8_UNorm;
+
+                // Create render graph textures
+                var outputTexture = UniversalRenderer.CreateRenderGraphTexture(renderGraph, cameraDescriptor, "_VMFilterPaletteOutput", false);
+                var scaledIndexTexture = UniversalRenderer.CreateRenderGraphTexture(renderGraph, indexDescriptor, "_VMFilterPaletteIndex", false);
+
+                // Pass data
+                passData.feature = _feature;
+                passData.sourceTexture = sourceTexture;
+                passData.outputTexture = outputTexture;
+                passData.scaledIndexTexture = scaledIndexTexture;
+                passData.cameraDescriptor = cameraDescriptor;
+
+                builder.UseTexture(sourceTexture, AccessFlags.Read);
+                builder.UseTexture(outputTexture, AccessFlags.Write);
+                builder.UseTexture(scaledIndexTexture, AccessFlags.Write);
+                builder.AllowPassCulling(false);
+
+                builder.SetRenderFunc((VMFilterPalettePassData data, UnsafeGraphContext context) =>
+                {
+                    // Get CommandBuffer from UnsafeCommandBuffer
+                    var unsafeCmd = CommandBufferHelpers.GetNativeCommandBuffer(context.cmd);
+
+                    // Set compute buffers
+                    unsafeCmd.SetComputeBufferParam(data.feature.shader, data.feature._kernel, "Bytecode", data.feature._bytecodeBuffer);
+                    unsafeCmd.SetComputeBufferParam(data.feature.shader, data.feature._kernel, "Programs", data.feature._programBuffer);
+
+                    // Blit index texture to scaled index texture
+                    unsafeCmd.Blit(data.feature.indexTexture, data.scaledIndexTexture);
+
+                    // Set compute textures
+                    unsafeCmd.SetComputeTextureParam(data.feature.shader, data.feature._kernel, SourceTexId, data.sourceTexture);
+                    unsafeCmd.SetComputeTextureParam(data.feature.shader, data.feature._kernel, OutTexId, data.outputTexture);
+                    unsafeCmd.SetComputeTextureParam(data.feature.shader, data.feature._kernel, IndexTexId, data.scaledIndexTexture);
+
+                    // Update shader constants
+                    int width = data.cameraDescriptor.width;
+                    int height = data.cameraDescriptor.height;
+                    data.feature.UpdateShaderConstants(unsafeCmd, width, height);
+
+                    // Dispatch compute shader
+                    int groupsX = Mathf.CeilToInt(width / 8.0f);
+                    int groupsY = Mathf.CeilToInt(height / 8.0f);
+                    unsafeCmd.DispatchCompute(data.feature.shader, data.feature._kernel, groupsX, groupsY, 1);
+
+                    // Blit result back to source
+                    Blitter.BlitCameraTexture(unsafeCmd, data.outputTexture, data.sourceTexture);
+                });
+            }
+        }
+
+        private class VMFilterPalettePassData
+        {
+            public VMFilterPaletteRendererFeature feature;
+            public TextureHandle sourceTexture;
+            public TextureHandle outputTexture;
+            public TextureHandle scaledIndexTexture;
+            public RenderTextureDescriptor cameraDescriptor;
+        }
+
         public void Dispose()
         {
-            RenderingUtils.ReleaseRTHandle(ref _outputHandle);
-            RenderingUtils.ReleaseRTHandle(ref _scaledIndexHandle);
+            _outputHandle?.Release();
+            _scaledIndexHandle?.Release();
         }
     }
 
