@@ -1,6 +1,7 @@
-# VMFilterPaletteCameraEffect の適用手順
+# VMFilterPaletteRendererFeature の適用手順
 
-このドキュメントは、`VMFilterPaletteCameraEffect` スクリプトを使ってカメラのレンダリング結果に VMFilterPalette コンピュートシェーダーを適用する手順をまとめたものです。
+このドキュメントは、Universal Render Pipeline (URP) のレンダラーに `VMFilterPaletteRendererFeature`
+を追加し、カメラのレンダリング結果に VMFilterPalette コンピュートシェーダーを適用するための手順をまとめたものです。
 
 ## 必要なアセットの配置確認
 
@@ -13,30 +14,32 @@
 
 これらは既存のサンプルをインポートすると自動的に配置されています。`SampleIndex.png` などが無い場合は、メニュー **GPGPUCPU > Create Sample Textures** を実行して再生成してください。
 
-## スクリプトの追加手順
+## Universal Renderer Asset への追加
 
-1. Unity で対象のシーンを開きます。
-2. カメラ（例: `Main Camera`）を選択し、Inspector で **Add Component** をクリックして `VMFilterPaletteCameraEffect` を追加します。
-3. Inspector に表示される以下のフィールドへ、それぞれのアセットを割り当てます。
+1. 対象の URP Renderer Asset（例: `ForwardRenderer.asset`）を Project ウィンドウで選択します。
+2. Inspector の **Renderer Features** セクションで **Add Renderer Feature** をクリックし、一覧から `VMFilterPaletteRendererFeature` を追加します。
+3. 追加した Renderer Feature の Inspector で次のフィールドを設定します。
    - **Shader** : `Assets/GPGPUCPU/FilterPalette.compute`
    - **Index Texture** : `Assets/GPGPUCPU/SampleIndex.png` など、ピクセル毎に 0〜255 のインデックスを持つテクスチャ
    - **Bytecode Hex** : `Assets/GPGPUCPU/out/bytecode.hex.txt`
    - **Programs Json** : `Assets/GPGPUCPU/out/programs.json`
-4. シーンを再生すると、カメラの描画結果に対してコンピュートシェーダーによるパレット変換が適用されます。
+4. 任意で **Disable Jumps** や **Max Steps** を調整して、VM の挙動を制御します。
+
+> **メモ:** Renderer Feature はそれを参照するすべてのカメラに適用されます。特定のカメラでのみ使用したい場合は、URP Renderer を複製して適用対象のカメラに割り当ててください。
+
+## カメラ側の設定
+
+- URP の Renderer Asset が適用されているカメラであれば追加のスクリプトは不要です。
+- 後処理を無効化していてもフィルターは適用されますが、ほかのポストエフェクトと併用する場合は Renderer Features の実行順序で描画結果が変化します。
 
 ## 解像度の注意点
 
-- インデックステクスチャの解像度がカメラの出力解像度と異なる場合でも、スクリプトが自動で一時的な RenderTexture にリサイズします。ただし、意図したパレット結果を得るためには、できるだけ同じ解像度で作成することを推奨します。
-- カメラの解像度が変更された場合、スクリプトが内部の RenderTexture を自動的に作り直します。
-
-## VM のパラメーター
-
-- **Disable Jumps** : VM のジャンプ命令を無効化するかどうか。
-- **Max Steps** : ピクセルあたりの最大命令ステップ数。パフォーマンスと品質のバランスを見ながら調整してください。
+- インデックステクスチャの解像度がカメラの出力解像度と異なる場合、Renderer Feature が一時的な RenderTexture にリサイズして使用します。
+  意図したパレット結果を得るためには、できるだけ同じ解像度で作成することを推奨します。
+- カメラの解像度が変更された場合も、自動的に内部の RenderTexture を再確保します。
 
 ## トラブルシュート
 
-- Index Texture が未設定の状態ではエフェクトは実行されず、ログに警告が表示されます。
-- Bytecode Hex / Programs Json がパースできない場合は、Inspector で正しいアセットが設定されているか確認してください。
-- `OnRenderImage` が動作するため、カメラの **Allow HDR/Allow MSAA** 設定や後処理スタックと併用する場合は、Unity の標準ポストプロセスと同様に順序を調整してください。
-
+- Index Texture が未設定の場合はレンダリングされず、ログに警告が表示されます。正しいテクスチャが指定されているか確認してください。
+- Bytecode Hex / Programs Json の内容が破損している場合は、Inspector の参照先が正しいか、再生成を行ってください。
+- `FilterPalette.compute` 内のカーネル名が `Run` でないと Renderer Feature が初期化に失敗します。必要に応じてカーネル名を確認してください。
