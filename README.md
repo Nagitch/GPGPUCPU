@@ -93,13 +93,32 @@ Each instruction is 16 bits: `OOOO AAAA IIIIIIII`
    - `ProgramsJson` → `out/programs.json`  
 4. Play Scene.  
 
-Inspector controls:  
-- **DisableJumps** → suppress or allow jumps  
-- **MaxSteps** → limit instruction count  
+Inspector controls:
+- **DisableJumps** → suppress or allow jumps
+- **MaxSteps** → limit instruction count
 
 ---
 
-## 🧩 5. Example Programs
+## 📦 5. Authoring & Build Artifacts
+
+The workflow for creating new effects is intentionally simple and relies on a few plain-text assets that live alongside the
+Unity project:
+
+- `*.asm` (for example the programs in [`asm-samples/`](asm-samples/)) are human-authored source files. Each line contains a
+  mnemonic from the instruction set plus operands, comments, or labels. These files are what you edit when designing a new
+  shader effect.
+- `out/programs.json` is produced by the assembler. It is a 256-entry array, where each item exposes the bytecode offset and
+  instruction count (`length`) for that palette slot. Unity loads this file to know which slice of the bytecode buffer belongs
+  to a given palette index.
+- `out/bytecode.hex` contains the packed instruction stream as 16-bit hexadecimal words (one `0xOOOO` value per line). The
+  compute shader copies this data directly into the GPU buffer, so you can diff, version, or hand-edit it when needed.
+
+Running the assembler over a set of `.asm` files refreshes both output files, keeping the palette metadata and machine code in
+sync with your sources.
+
+---
+
+## 🧩 6. Example Programs
 
 | Slot | File | Effect |
 |------|-----------|---------|
@@ -111,7 +130,7 @@ Inspector controls:
 
 ---
 
-## 🧠 6. Artistic Usage
+## 🧠 7. Artistic Usage
 
 Because the VM treats all data as valid code, **you can feed arbitrary byte sequences** (noise, textures, random data) into `Bytecode` to produce unique glitch art and generative visuals.
 
