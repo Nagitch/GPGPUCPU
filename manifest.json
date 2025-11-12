@@ -2,23 +2,23 @@
   "entries": [
     {
       "slot": 0,
-      "file": "samples/identity.asm"
+      "file": "asm-samples/identity.asm"
     },
     {
       "slot": 1,
-      "file": "samples/invert.asm"
+      "file": "asm-samples/invert.asm"
     },
     {
       "slot": 2,
-      "file": "samples/posterize.asm"
+      "file": "asm-samples/posterize.asm"
     },
     {
       "slot": 3,
-      "file": "samples/tint_red.asm"
+      "file": "asm-samples/hash_glow.asm"
     },
     {
       "slot": 4,
-      "file": "samples/hash_glow.asm"
+      "file": "asm-samples/hash_glow.asm"
     }
   ]
 }
